@@ -1,0 +1,210 @@
+{% extends "forecast/base.html" %}
+{% load static forecast_extras %}
+
+{% block content %}
+<div class="layout">
+  <div class="area-form">
+    <form method="get" action="{% url 'forecast:index' %}" class="card shadow-sm form-card" id="forecast-form" novalidate>
+      <div class="card-body">
+        <h2 class="card-heading"><i class="bi bi-sliders"></i> Forecast settings</h2>
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger py-2">{% for e in form.non_field_errors %}{{ e }} {% endfor %}</div>
+        {% endif %}
+
+        <fieldset class="field-group">
+          <legend><i class="bi bi-calendar-event"></i> When does it start?</legend>
+          <div class="row g-2">
+            <div class="col-7">
+              <label class="form-label" for="{{ form.date.id_for_label }}">{{ form.date.label }}</label>
+              {{ form.date }}
+              {% for e in form.date.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+            </div>
+            <div class="col-5">
+              <label class="form-label" for="{{ form.hour.id_for_label }}">{{ form.hour.label }}</label>
+              {{ form.hour }}
+              {% for e in form.hour.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+            </div>
+          </div>
+          <div class="form-text">Available: {{ form.date.help_text }}</div>
+        </fieldset>
+
+        <fieldset class="field-group">
+          <legend><i class="bi bi-thermometer-half"></i> Latest reading <span class="optional">optional</span></legend>
+          <label class="form-label" for="{{ form.current_temp.id_for_label }}">{{ form.current_temp.label }}</label>
+          <div class="input-group {% if form.current_temp.errors %}has-validation{% endif %}">
+            {{ form.current_temp }}
+            <span class="input-group-text">°C</span>
+            {% for e in form.current_temp.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+          </div>
+          <div class="form-text">{{ form.current_temp.help_text }} <span id="recorded-hint"></span></div>
+        </fieldset>
+
+        <fieldset class="field-group">
+          <legend><i class="bi bi-cpu"></i> Model</legend>
+          <label class="form-label" for="{{ form.model.id_for_label }}">{{ form.model.label }}</label>
+          {{ form.model }}
+          {% for e in form.model.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+          <div class="d-flex justify-content-between align-items-baseline mt-3">
+            <label class="form-label mb-0" for="{{ form.horizon.id_for_label }}">{{ form.horizon.label }}</label>
+            <output class="horizon-out" id="horizon-out" for="{{ form.horizon.id_for_label }}">{{ form.horizon.value|default:24 }} h</output>
+          </div>
+          {{ form.horizon }}
+          {% for e in form.horizon.errors %}<div class="invalid-feedback d-block">{{ e }}</div>{% endfor %}
+        </fieldset>
+
+        <button type="submit" class="btn btn-primary btn-lg w-100" id="submit-btn">
+          <span class="spinner-border spinner-border-sm d-none" aria-hidden="true"></span>
+          <i class="bi bi-graph-up-arrow"></i> Forecast
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="area-scores">
+    <div class="card shadow-sm scores-card">
+      <div class="card-body">
+        <h2 class="card-heading"><i class="bi bi-trophy"></i> How the models scored</h2>
+        <p class="small text-secondary mb-2">Task 5 test: day-ahead forecasts from every midnight, 11–31 Dec 2025.</p>
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Model</th><th class="text-end">MAE</th><th class="text-end">RMSE</th></tr></thead>
+          <tbody>
+          {% for name, mae, rmse in scores %}
+            <tr{% if forloop.first %} class="best"{% endif %}>
+              <td>{{ name }}{% if forloop.first %} <span class="badge text-bg-success">best</span>{% endif %}</td>
+              <td class="text-end">{{ mae|floatformat:2 }} °C</td>
+              <td class="text-end">{{ rmse|floatformat:2 }} °C</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="area-result">
+    {% if result %}
+      {% with s=result.summary %}
+      <section class="card shadow-sm result-card band-{{ result.band.name }}" id="result">
+        <div class="result-head">
+          <div class="result-icon"><i class="bi {{ result.band.icon }}"></i></div>
+          <div class="flex-grow-1">
+            <div class="result-label">Forecast for {{ s.next.time|isotime }}</div>
+            <div class="result-value">{{ s.next.temperature|floatformat:1 }}<span>°C</span></div>
+            <div class="result-range">95 % range {{ s.next.lower|floatformat:1 }} – {{ s.next.upper|floatformat:1 }} °C · {{ result.band.name }}</div>
+          </div>
+          <div class="result-badges">
+            <span class="badge rounded-pill bg-light text-dark"><i class="bi bi-cpu"></i> {{ result.model }}</span>
+            <span class="badge rounded-pill bg-light text-dark"><i class="bi bi-clock"></i> {{ result.horizon }} h</span>
+            {% if result.cached %}<span class="badge rounded-pill bg-light text-dark" title="Identical inputs were forecast before; served from the cache"><i class="bi bi-lightning-charge"></i> cached</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="card-body">
+          {% if result.gap_hours %}
+            <div class="alert {% if result.beyond_tested %}alert-danger{% else %}alert-warning{% endif %} gap-alert" role="alert">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <div>
+                <strong>{{ result.gap_days|floatformat:"-1" }} days after the last recorded hour ({{ result.data_end|isotime }}).</strong>
+                The data stops there, so the model first continues its own forecast through those days and then forecasts from it.
+                {% if result.beyond_tested %}
+                  Task 5 only tested forecasts up to 21 days ahead; this far from the data the values are not reliable
+                  (SARIMA drifts colder every week, ARIMA goes flat, the networks repeat a fixed pattern).
+                {% else %}
+                  Task 5 measured about 1.5 °C error for SARIMA over 21 days ahead, more for the other models.
+                {% endif %}
+              </div>
+            </div>
+          {% endif %}
+          <div class="row g-3 stats">
+            <div class="col-6 col-md-3"><div class="stat"><div class="stat-label"><i class="bi bi-arrow-down"></i> Low</div>
+              <div class="stat-value">{{ s.low.temperature|floatformat:1 }} °C</div><div class="stat-sub">{{ s.low.time|isotime:"%H:%M, %d %b" }}</div></div></div>
+            <div class="col-6 col-md-3"><div class="stat"><div class="stat-label"><i class="bi bi-arrow-up"></i> High</div>
+              <div class="stat-value">{{ s.high.temperature|floatformat:1 }} °C</div><div class="stat-sub">{{ s.high.time|isotime:"%H:%M, %d %b" }}</div></div></div>
+            <div class="col-6 col-md-3"><div class="stat"><div class="stat-label"><i class="bi bi-bullseye"></i> Typical error</div>
+              <div class="stat-value">± {{ s.task5_mae|floatformat:2 }} °C</div><div class="stat-sub">Task 5 day-ahead MAE</div></div></div>
+            <div class="col-6 col-md-3"><div class="stat"><div class="stat-label"><i class="bi bi-check2-circle"></i> vs recorded</div>
+              {% if s.mae_vs_actual is not None %}
+                <div class="stat-value">{{ s.mae_vs_actual|floatformat:2 }} °C</div><div class="stat-sub">MAE over {{ s.actual_hours }} recorded h</div>
+              {% else %}
+                <div class="stat-value">—</div><div class="stat-sub">future: no data yet</div>
+              {% endif %}</div></div>
+          </div>
+
+          <div class="chart-wrap"><canvas id="forecast-chart" aria-label="Forecast chart" role="img"></canvas></div>
+
+          <p class="note">
+            {% if result.last_hour.overridden %}
+              <i class="bi bi-pencil-square"></i> You set {{ result.last_hour.time|isotime:"%H:%M" }} to <strong>{{ result.last_hour.used|floatformat:1 }} °C</strong>
+              {% if result.last_hour.recorded is not None %}(recorded: {{ result.last_hour.recorded|floatformat:1 }} °C).{% else %}(no recording for that hour).{% endif %}
+            {% elif result.last_hour.recorded is None %}
+              <i class="bi bi-cpu"></i> No recording for {{ result.last_hour.time|isotime }}: the model's own estimate is {{ result.last_hour.used|floatformat:1 }} °C.
+            {% else %}
+              <i class="bi bi-database"></i> Last recorded hour ({{ result.last_hour.time|isotime }}): {{ result.last_hour.recorded|floatformat:1 }} °C.
+            {% endif %}
+            {% if result.interval == "model" %}
+              The shaded band is the model's own 95 % interval{% if result.gap_hours %}, counted from the last recorded hour{% endif %}.
+            {% elif result.gap_hours %}
+              The shaded band is ±1.96 × this model's Task 5 test RMSE 24 hours ahead; this far from the data the real error is larger.
+            {% else %}
+              The shaded band is ±1.96 × this model's Task 5 test RMSE at each forecast hour.
+            {% endif %}
+          </p>
+
+          <details class="hourly">
+            <summary><i class="bi bi-table"></i> Hourly values</summary>
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle mb-0">
+                <thead><tr><th>Time</th><th class="text-end">Forecast</th><th class="text-end">95 % range</th><th class="text-end">Recorded</th></tr></thead>
+                <tbody>
+                {% for h in result.forecast %}
+                  <tr><td>{{ h.time|isotime:"%d %b %H:%M" }}</td><td class="text-end fw-semibold">{{ h.temperature|floatformat:1 }} °C</td>
+                    <td class="text-end text-secondary">{{ h.lower|floatformat:1 }} – {{ h.upper|floatformat:1 }}</td>
+                    <td class="text-end">{% if h.actual is not None %}{{ h.actual|floatformat:1 }} °C{% else %}—{% endif %}</td></tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+
+          <div class="result-foot">
+            <span>{{ result.model_label }}</span>
+            <a href="{{ api_url }}" target="_blank" rel="noopener"><i class="bi bi-braces"></i> JSON</a>
+          </div>
+        </div>
+      </section>
+      {{ result|json_script:"forecast-data" }}
+      {% endwith %}
+    {% else %}
+      <section class="card shadow-sm empty-card">
+        <div class="card-body">
+          {% if form.errors %}
+            <div class="empty-icon text-danger"><i class="bi bi-exclamation-circle"></i></div>
+            <h2>Check the highlighted fields</h2>
+            <p>Some inputs need fixing before the models can run. The messages under each field say what is wrong.</p>
+          {% else %}
+            <div class="empty-icon"><i class="bi bi-cloud-sun"></i></div>
+            <h2>Pick a start time and press Forecast</h2>
+            <p>The app takes the recorded temperatures before the start time and forecasts the hours after it.
+               Choose any hour from 2001 to the end of 2026. For hours up to the end of 2025 the forecast is drawn
+               next to what was actually recorded, so you can see how well the model did. The data ends there, so
+               2026 forecasts get less reliable the further they are from it.</p>
+            <ul class="tips">
+              <li><i class="bi bi-star"></i> <strong>SARIMA</strong> was the most accurate model in Task 5.</li>
+              <li><i class="bi bi-thermometer-half"></i> Enter your own latest reading to see how the forecast reacts.</li>
+              <li><i class="bi bi-braces"></i> Every forecast is also available as JSON at <code>/api/forecast/</code>.</li>
+            </ul>
+            <a class="btn btn-outline-primary" href="?date=2025-12-25&amp;hour=0&amp;model=SARIMA&amp;horizon=24"><i class="bi bi-play-fill"></i> Try 25 Dec 2025</a>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>window.OBSERVATION_URL = "{% url 'forecast:observation' %}";</script>
+  <script src="{% static 'forecast/app.js' %}"></script>
+{% endblock %}

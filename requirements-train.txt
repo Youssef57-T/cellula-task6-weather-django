@@ -1,0 +1,7 @@
+# Re-creating the model bundle with scripts/export_models.py, and running Task6.ipynb
+-r requirements.txt
+torch>=2.2
+matplotlib>=3.8
+nbformat
+nbconvert
+ipykernel

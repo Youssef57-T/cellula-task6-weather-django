@@ -1,0 +1,15 @@
+# Render blueprint: New > Blueprint, pick this repository.
+services:
+  - type: web
+    name: cairo-temperature-forecast
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: gunicorn weather_site.wsgi --workers 2 --timeout 60
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: DJANGO_DEBUG
+        value: "0"
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
